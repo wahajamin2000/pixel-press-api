@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use App\Enums\ProductStatus;
+use App\Enums\ProductType;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rules\Enum;
 
@@ -22,6 +23,7 @@ class StoreProductRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'type' => ['required', new Enum(ProductType::class)],
             'name' => 'required|string|max:255',
             'slug' => 'nullable|string|max:50|unique:products,slug',
             'description' => 'nullable|string',
@@ -30,16 +32,25 @@ class StoreProductRequest extends FormRequest
             'category_id' => 'required|integer|exists:product_categories,id',
             'price' => 'required|numeric|min:0',
             'base_price' => 'nullable|numeric|min:0',
+            'price_per_sqin' => 'nullable|numeric|min:0',
             'weight' => 'nullable|numeric|min:0',
-            'dimensions' => 'nullable|string', // {"length": 30,"width": 20,"height": 1}
-            'size_options' => 'nullable|string', // {0: "S",1: "M",2: "L"}
-            'color_options' => 'nullable|string', // {0: "White",1: "Black",2: "Gray"}
-//            'dimensions.*' => 'nullable|numeric|min:0',
-//            'dimensions.length' => 'nullable|numeric|min:0',
-//            'dimensions.width' => 'nullable|numeric|min:0',
-//            'dimensions.height' => 'nullable|numeric|min:0',
+//            'dimensions' => 'nullable|string', // {"length": 30,"width": 20,"height": 1}
+//            'size_options' => 'nullable|array', // {0: "S",1: "M",2: "L"}
+//            'color_options' => 'nullable|array', // {0: "White",1: "Black",2: "Gray"}
+            'dimensions' => 'nullable',
+            'dimensions.width' => 'nullable|numeric|min:0',
+            'dimensions.height' => 'nullable|numeric|min:0',
 //            'color_options.*' => 'string|max:50',
 //            'size_options.*' => 'string|max:50',
+            'size_options' => 'nullable|array',
+            'size_options.*.size' => 'required|string|max:50',
+            'size_options.*.additional_charge' => 'required|numeric|min:0',
+
+            'color_options' => 'nullable|array',
+            'color_options.*.color' => 'required|string|max:50',
+            'color_options.*.additional_charge' => 'required|numeric|min:0',
+
+            'specifications' => 'nullable',
             'material' => 'nullable|string|max:255',
             'status' => ['required', new Enum(ProductStatus::class)],
             'is_featured' => 'boolean',
@@ -57,6 +68,7 @@ class StoreProductRequest extends FormRequest
     public function messages(): array
     {
         return [
+            'type.required' => 'Product type is required.',
             'name.required' => 'Product name is required.',
             'sku.required' => 'SKU is required.',
             'sku.unique' => 'This SKU already exists.',
@@ -64,13 +76,30 @@ class StoreProductRequest extends FormRequest
             'category_id.exists' => 'Selected product category does not exist.',
             'price.required' => 'Price is required.',
             'price.min' => 'Price must be greater than or equal to 0.',
+            'price_per_sqin.numeric' => 'Price per square inch must be numeric.',
             'images.max' => 'You can upload maximum 10 images.',
             'images.*.image' => 'Each file must be an image.',
             'images.*.mimes' => 'Images must be jpeg, png, jpg, gif, or webp format.',
             'images.*.max' => 'Each image must not exceed 5MB.',
-            'dimensions.string' => 'Dimensions must be a valid JSON string.',
-            'color_options.string' => 'Color options must be a valid JSON array string.',
-            'size_options.string' => 'Size options must be a valid JSON array string.',
+//            'dimensions.string' => 'Dimensions must be a valid JSON string.',
+
+            'dimensions.*.width.required' => 'Width is required for each dimension.',
+            'dimensions.*.height.required' => 'Height is required for each dimension.',
+            'dimensions.*.width.numeric' => 'Width must be numeric.',
+            'dimensions.*.height.numeric' => 'Height must be numeric.',
+
+            // Size pricing messages
+            'size_options.*.size.required' => 'Size name is required.',
+            'size_options.*.additional_charge.required' => 'Additional charge is required for each size.',
+            'size_options.*.additional_charge.numeric' => 'Additional charge must be numeric.',
+
+            // Color pricing messages
+            'color_options.*.color.required' => 'Color name is required.',
+            'color_options.*.additional_charge.required' => 'Additional charge is required for each color.',
+            'color_options.*.additional_charge.numeric' => 'Additional charge must be numeric.',
+
+//            'color_options.string' => 'Color options must be a valid JSON array string.',
+//            'size_options.string' => 'Size options must be a valid JSON array string.',
         ];
     }
 
@@ -117,8 +146,8 @@ class StoreProductRequest extends FormRequest
                 $this->merge(['size_options' => $sizeOptions]);
             }
         }
-    }
 
+    }
 
     /**
      * Configure the validator instance.
@@ -126,6 +155,10 @@ class StoreProductRequest extends FormRequest
     public function withValidator($validator)
     {
         $validator->after(function ($validator) {
+            if ($this->type === ProductType::CUSTOM->value && !$this->price_per_sqin) {
+                $validator->errors()->add('price_per_sqin', 'Price per square inch is required for custom products.');
+            }
+
             // Validate JSON format for string inputs
             if ($this->has('dimensions') && is_string($this->dimensions)) {
                 $decoded = json_decode($this->dimensions, true);
@@ -152,39 +185,39 @@ class StoreProductRequest extends FormRequest
             }
 
             // Validate dimensions structure after JSON decode
-            if ($this->has('dimensions') && is_array($this->dimensions)) {
-                $dimensions = $this->dimensions;
-
-                if (isset($dimensions['length']) && (!is_numeric($dimensions['length']) || $dimensions['length'] < 0)) {
-                    $validator->errors()->add('dimensions.length', 'Length must be a numeric value greater than or equal to 0.');
-                }
-
-                if (isset($dimensions['width']) && (!is_numeric($dimensions['width']) || $dimensions['width'] < 0)) {
-                    $validator->errors()->add('dimensions.width', 'Width must be a numeric value greater than or equal to 0.');
-                }
-
-                if (isset($dimensions['height']) && (!is_numeric($dimensions['height']) || $dimensions['height'] < 0)) {
-                    $validator->errors()->add('dimensions.height', 'Height must be a numeric value greater than or equal to 0.');
-                }
-            }
+//            if ($this->has('dimensions') && is_array($this->dimensions)) {
+//                $dimensions = $this->dimensions;
+//
+//                if (isset($dimensions['length']) && (!is_numeric($dimensions['length']) || $dimensions['length'] < 0)) {
+//                    $validator->errors()->add('dimensions.length', 'Length must be a numeric value greater than or equal to 0.');
+//                }
+//
+//                if (isset($dimensions['width']) && (!is_numeric($dimensions['width']) || $dimensions['width'] < 0)) {
+//                    $validator->errors()->add('dimensions.width', 'Width must be a numeric value greater than or equal to 0.');
+//                }
+//
+//                if (isset($dimensions['height']) && (!is_numeric($dimensions['height']) || $dimensions['height'] < 0)) {
+//                    $validator->errors()->add('dimensions.height', 'Height must be a numeric value greater than or equal to 0.');
+//                }
+//            }
 
             // Validate color options
-            if ($this->has('color_options') && is_array($this->color_options)) {
-                foreach ($this->color_options as $index => $color) {
-                    if (!is_string($color) || strlen($color) > 50) {
-                        $validator->errors()->add("color_options.{$index}", 'Each color option must be a string with maximum 50 characters.');
-                    }
-                }
-            }
-
-            // Validate size options
-            if ($this->has('size_options') && is_array($this->size_options)) {
-                foreach ($this->size_options as $index => $size) {
-                    if (!is_string($size) || strlen($size) > 50) {
-                        $validator->errors()->add("size_options.{$index}", 'Each size option must be a string with maximum 50 characters.');
-                    }
-                }
-            }
+//            if ($this->has('color_options') && is_array($this->color_options)) {
+//                foreach ($this->color_options as $index => $color) {
+//                    if (!is_string($color) || strlen($color) > 50) {
+//                        $validator->errors()->add("color_options.{$index}", 'Each color option must be a string with maximum 50 characters.');
+//                    }
+//                }
+//            }
+//
+//            // Validate size options
+//            if ($this->has('size_options') && is_array($this->size_options)) {
+//                foreach ($this->size_options as $index => $size) {
+//                    if (!is_string($size) || strlen($size) > 50) {
+//                        $validator->errors()->add("size_options.{$index}", 'Each size option must be a string with maximum 50 characters.');
+//                    }
+//                }
+//            }
         });
     }
 }

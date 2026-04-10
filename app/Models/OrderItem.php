@@ -16,6 +16,8 @@ class OrderItem extends Model
     protected $fillable = [
         'order_id',
         'product_id',
+        'type',
+        'gangsheet_id',
         'quantity',
         'unit_price',
         'total_price',
@@ -25,6 +27,7 @@ class OrderItem extends Model
         'print_dimensions',
         'dimensions',
         'color_options',
+        'size_options',
         'special_instructions',
         'gang_sheet_position',
     ];
@@ -37,12 +40,16 @@ class OrderItem extends Model
         'print_dimensions' => 'array',
         'dimensions' => 'array',
         'color_options' => 'array',
+        'size_options' => 'array',
         'gang_sheet_position' => 'array',
+        'gangsheet_data' => 'array',
+        'gangsheet_generated_at' => 'datetime',
     ];
 
     protected $appends = [
         'formatted_total_price',
-        'design_files_urls'
+        'design_files_urls',
+        'is_gangsheet'
     ];
 
     /**
@@ -59,6 +66,14 @@ class OrderItem extends Model
     public function product(): BelongsTo
     {
         return $this->belongsTo(Product::class);
+    }
+
+    /**
+     * Get the gangsheet
+     */
+    public function gangsheet(): BelongsTo
+    {
+        return $this->belongsTo(Gangsheet::class);
     }
 
     /**
@@ -94,6 +109,13 @@ class OrderItem extends Model
         })->toArray();
     }
 
+    /**
+     * Check if this is a gang sheet item
+     */
+    public function getIsGangsheetAttribute(): bool
+    {
+        return $this->type === 'gangsheet';
+    }
 
     /**
      * Calculate total price based on quantity and unit price
@@ -126,5 +148,80 @@ class OrderItem extends Model
     public function isPartOfGangSheet(): bool
     {
         return !is_null($this->gang_sheet_position);
+    }
+
+    /**
+     * Check if gang sheet has been generated
+     */
+    public function isGangsheetGenerated(): bool
+    {
+        return $this->is_gangsheet &&
+            $this->gangsheet &&
+            $this->gangsheet->is_generated;
+    }
+
+    /**
+     * Get gang sheet download URL from related gangsheet
+     */
+    public function getGangsheetDownloadUrl(): ?string
+    {
+        if (!$this->is_gangsheet || !$this->gangsheet) {
+            return null;
+        }
+
+        return $this->gangsheet->download_url;
+    }
+
+    /**
+     * Get gang sheet thumbnail URL from related gangsheet
+     */
+    public function getGangsheetThumbnailUrl(): ?string
+    {
+        if (!$this->is_gangsheet || !$this->gangsheet) {
+            return null;
+        }
+
+        return $this->gangsheet->thumbnail_url;
+    }
+
+    /**
+     * Get gang sheet edit URL from related gangsheet
+     */
+    public function getGangsheetEditUrl(): ?string
+    {
+        if (!$this->is_gangsheet || !$this->gangsheet) {
+            return null;
+        }
+
+        return $this->gangsheet->edit_url;
+    }
+
+    /**
+     * Get gang sheet status
+     */
+    public function getGangsheetStatus(): ?string
+    {
+        if (!$this->is_gangsheet || !$this->gangsheet) {
+            return null;
+        }
+
+        return $this->gangsheet->status;
+    }
+
+
+    /**
+     * Scope to get only gangsheet items
+     */
+    public function scopeGangsheets($query)
+    {
+        return $query->where('type', 'gangsheet');
+    }
+
+    /**
+     * Scope to get only product items
+     */
+    public function scopeProducts($query)
+    {
+        return $query->where('type', 'product');
     }
 }

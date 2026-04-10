@@ -41,6 +41,10 @@ class ProductApiController extends Controller
             $query->where('status', $request->status);
         }
 
+        if ($request->has('type')) {
+            $query->where('type', $request->type);
+        }
+
         // Filter by featured
         if ($request->has('featured')) {
             $query->featured();
@@ -85,6 +89,10 @@ class ProductApiController extends Controller
         // Filter by status
         if ($request->has('status')) {
             $query->where('status', $request->status);
+        }
+
+        if ($request->has('type')) {
+            $query->where('type', $request->type);
         }
 
         // Filter by featured

@@ -3,9 +3,11 @@
 namespace App\Models;
 
 use App\Enums\ProductStatus;
+use App\Enums\ProductType;
 use App\Traits\HasMedia;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
@@ -16,9 +18,11 @@ class Product extends Model
     protected $guarded = [];
 
     protected $casts = [
+        'type' => ProductType::class,
         'status' => ProductStatus::class,
         'price' => 'decimal:2',
         'base_price' => 'decimal:2',
+        'price_per_sqin' => 'decimal:2',
         'weight' => 'decimal:2',
         'dimensions' => 'array',
         'color_options' => 'array',
@@ -31,25 +35,10 @@ class Product extends Model
     protected $appends = [
         'formatted_price',
         'formatted_base_price',
+        'formatted_price_per_sqin',
         'primary_image_url',
         'all_images_urls'
     ];
-
-    /**
-     * Get product images
-     */
-    public function images(): HasMany
-    {
-        return $this->hasMany(ProductImage::class)->orderBy('sort_order');
-    }
-
-    /**
-     * Get order items for this product
-     */
-    public function orderItems(): HasMany
-    {
-        return $this->hasMany(OrderItem::class);
-    }
 
     /**
      * Get formatted price
@@ -67,6 +56,10 @@ class Product extends Model
         return '$' . number_format($this->base_price, 2);
     }
 
+    public function getFormattedPricePerSqinAttribute(): ?string
+    {
+        return $this->price_per_sqin ? '$' . number_format($this->price_per_sqin, 4) : null;
+    }
     /**
      * Get primary image URL
      */
@@ -162,6 +155,15 @@ class Product extends Model
         return $query->where('is_featured', true);
     }
 
+    public function scopeBasic($query)
+    {
+        return $query->where('type', ProductType::BASIC);
+    }
+
+    public function scopeCustom($query)
+    {
+        return $query->where('type', ProductType::CUSTOM);
+    }
     /**
      * Scope for search
      */
@@ -190,9 +192,68 @@ class Product extends Model
         return $this->status === ProductStatus::ACTIVE;
     }
 
-    public function category()
+    public function isBasic(): bool
     {
-        return $this->belongsTo(ProductCategory::class,'category_id');
+        return $this->type === ProductType::BASIC;
+    }
+
+    public function isCustom(): bool
+    {
+        return $this->type === ProductType::CUSTOM;
+    }
+
+
+    public function getAvailableSizes(): array
+    {
+        if (!$this->size_options) {
+            return [];
+        }
+
+        return collect($this->size_options)->map(function ($item) {
+            return [
+                'size' => $item['size'],
+                'additional_charge' => '$' . number_format($item['additional_charge'], 2),
+            ];
+        })->toArray();
+    }
+
+    public function getAvailableColors(): array
+    {
+        if (!$this->color_options) {
+            return [];
+        }
+
+        return collect($this->color_options)->map(function ($item) {
+            return [
+                'color' => $item['color'],
+                'additional_charge' => '$' . number_format($item['additional_charge'], 2),
+            ];
+        })->toArray();
+    }
+
+
+    /**
+     * Get product images
+     */
+    public function images(): HasMany
+    {
+        return $this->hasMany(ProductImage::class)->orderBy('sort_order');
+    }
+
+    /**
+     * Get order items for this product
+     */
+    public function orderItems(): HasMany
+    {
+        return $this->hasMany(OrderItem::class);
+    }
+
+    /**
+     * Get product category for this product
+     */
+    public function category(): BelongsTo
+    {
+        return $this->belongsTo(ProductCategory::class, 'category_id');
     }
 
     public function createdBy()

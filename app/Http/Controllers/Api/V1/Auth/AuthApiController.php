@@ -135,7 +135,7 @@ class AuthApiController extends Controller
         $userValidation['city']             = ['nullable'];
         $userValidation['state']            = ['nullable'];
         $userValidation['post_code']        = ['nullable'];
-        $userValidation['password']         = ['required', 'min:13', 'max:30'];
+        $userValidation['password']         = ['required', 'min:8', 'max:30'];
 
         return $request->validate($userValidation);
     }

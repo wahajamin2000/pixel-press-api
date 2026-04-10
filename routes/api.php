@@ -66,8 +66,10 @@ Route::prefix('v1')->group(function () {
     * => Order Routes (guest checkout)
     * =======================================================*/
 
+    Route::get('order-settings', [OrderApiController::class, 'getOrderSettings']);
+
     Route::post('orders', [OrderApiController::class, 'store']);
-    Route::get('orders/{order}', [OrderApiController::class, 'show']);
+    Route::get('orders/{order}', [OrderApiController::class, 'show'])->middleware('auth:sanctum');
     Route::get('orders/{order}/status-history', [OrderApiController::class, 'statusHistory']);
 
     // Design file upload for order items
@@ -155,7 +157,7 @@ Route::group(['middleware' => ['auth:sanctum']], function ($router) {
 
             Route::put('products/status/{product}', [ProductApiController::class, 'updateStatus']);
             Route::post('products/{product}', [ProductApiController::class, 'update']);
-            Route::apiResource('products', ProductApiController::class);
+            Route::apiResource('products', ProductApiController::class)->except(['show']);
             Route::post('products/{product}/images/{image}', [ProductApiController::class, 'updateImage']);
             Route::delete('products/{product}/images/{image}', [ProductApiController::class, 'deleteImage']);
 
@@ -163,6 +165,10 @@ Route::group(['middleware' => ['auth:sanctum']], function ($router) {
             /*=======================================================
             * => Order Routes
             * =======================================================*/
+
+            Route::patch('order-settings/{order_setting}', [OrderApiController::class, 'updateOrderSettings']);
+
+            Route::get('orders/{order}/items/{orderItem}/gangsheet/download', [OrderApiController::class, 'downloadGangSheet']);
 
             Route::get('orders', [OrderApiController::class, 'index']);
             Route::patch('orders/{order}/status', [OrderApiController::class, 'updateStatus']);
@@ -180,6 +186,8 @@ Route::group(['middleware' => ['auth:sanctum']], function ($router) {
     Route::group(['middleware' => 'isCustomer'], function ($router) {
 
         Route::prefix('v1/customer')->group(function () {
+
+            Route::apiResource('products', ProductApiController::class)->only(['show']);
 
             /*=======================================================
             * => Order Routes

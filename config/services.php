@@ -49,4 +49,10 @@ return [
         'secret' => env('STRIPE_SECRET'),
         'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
     ],
+
+    'gangsheet' => [
+        'api_token' => env('GANG_SHEET_API_TOKEN', '828|RwjKVn5sj6JQtY8g1cP9yyaZUOGhrMskg7GFF28S9b711606'),
+        'base_url' => env('GANG_SHEET_BASE_URL', 'https://app.buildagangsheet.com/api/v1'),
+        'timeout' => env('GANG_SHEET_TIMEOUT', 60),
+    ],
 ];

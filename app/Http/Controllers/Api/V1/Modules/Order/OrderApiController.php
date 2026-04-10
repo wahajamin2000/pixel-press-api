@@ -7,12 +7,15 @@ use App\Http\Controllers\Api\Controller;
 use App\Http\Requests\StoreOrderRequest;
 use App\Http\Resources\Lookups\OrderLookupResource;
 use App\Http\Resources\Modules\Order\OrderResource;
+use App\Http\Resources\Modules\Order\OrderSettingResource;
 use App\Http\Resources\Modules\Order\OrderStatusHistoryResource;
+use App\Models\OrderSetting;
 use App\Models\User;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\OrderItemDesignFile;
 use App\Models\Product;
+use App\Services\GangSheetService;
 use App\Traits\HasMedia;
 use App\Enums\OrderStatus;
 use Illuminate\Http\JsonResponse;
@@ -26,6 +29,14 @@ use Illuminate\Support\Str;
 class OrderApiController extends Controller
 {
     use HasMedia;
+
+    protected GangSheetService $gangSheetService;
+
+    public function __construct(GangSheetService $gangSheetService)
+    {
+        $this->gangSheetService = $gangSheetService;
+    }
+
 
     /**
      * Display a listing of orders
@@ -155,21 +166,25 @@ class OrderApiController extends Controller
             $user = $this->findOrCreateUser($request->validated());
 
             // Pre-calculate order totals before creating order
-            $orderCalculations = $this->calculateOrderTotals($request->validated());
+//            $orderCalculations = $this->calculateOrderTotals($request->validated());
 
             // Create order with calculated values
-            $order = $this->createOrder($user, $request->validated(), $orderCalculations);
+//            $order = $this->createOrder($user, $request->validated(), $orderCalculations);
+            $order = $this->createOrder($user, $request->validated());
 
             // Create order items with file handling
             $this->createOrderItems($order, $request->validated()['items'], $request);
 
+            // Process gang sheets - call BuildAGangSheet API for all gang sheet items
+            $this->processGangSheetItems($order);
+
             // Recalculate totals (in case of any rounding differences)
             $order->refresh();
-            $this->recalculateOrderTotals($order);
+//            $this->recalculateOrderTotals($order);
 
             DB::commit();
 
-            $order->load(['user', 'items.product', 'items.designFiles']);
+            $order->load(['user', 'items.product','items.gangsheet', 'items.designFiles']);
 
             if (isset($user->temporary_password)) {
                 $this->sendWelcomeEmail($user);
@@ -198,7 +213,7 @@ class OrderApiController extends Controller
      */
     public function show(Order $order): JsonResponse
     {
-        $order->load(['user', 'items.product', 'items.designFiles']);
+        $order->load(['user', 'items.product','items.gangsheet', 'items.designFiles']);
 
         return $this->successResponse('Order retrieved successfully', [
                 'order' => new OrderResource($order)
@@ -593,20 +608,20 @@ class OrderApiController extends Controller
     /**
      * Create order with calculated values
      */
-    private function createOrder(User $user, array $data, array $calculations): Order
+    private function createOrder(User $user, array $data): Order
     {
         return Order::create([
             'user_id' => $user->id,
             'slug' => generate_slug($user->name, 32, 'ord-'),
             'order_number' => Order::generateOrderNumber(),
             'status' => OrderStatus::PENDING,
-            'subtotal' => $calculations['subtotal'],
-            'tax_amount' => $calculations['tax_amount'],
-            'shipping_amount' => $calculations['shipping_amount'],
-            'discount_amount' => $calculations['discount_amount'],
-            'total_amount' => $calculations['total_amount'],
+            'subtotal' => $data['subtotal'],
+            'tax_amount' => $data['tax_amount'],
+            'shipping_amount' => $data['shipping_amount'],
+            'discount_amount' => $data['discount_amount'],
+            'total_amount' => $data['total_amount'],
             'currency' => 'USD',
-            'payment_status' => PaymentStatus::PENDING,
+            'payment_status' => PaymentStatus::PENDING->value,
             'billing_address' => $data['billing_address'] ?? null,
             'shipping_address' => $data['shipping_address'] ?? $data['billing_address'] ?? null,
             'notes' => $data['notes'] ?? null,
@@ -643,40 +658,541 @@ class OrderApiController extends Controller
     /**
      * Create order items with proper file handling
      */
+//    private function createOrderItems(Order $order, array $items, Request $request): void
+//    {
+//        foreach ($items as $index => $itemData) {
+//            $product = Product::findOrFail($itemData['product_id']);
+//
+//            // Calculate item price with customizations
+////            $unitPrice = $this->calculateItemPrice($product, $itemData);
+//            $totalPrice = $itemData['unit_price'] * $itemData['quantity'];
+//
+//            $orderItem = OrderItem::create([
+//                'order_id' => $order->id,
+//                'product_id' => $product->id,
+//                'quantity' => $itemData['quantity'],
+//                'unit_price' => $itemData['unit_price'],
+//                'total_price' => $totalPrice,
+//                'product_name' => $product->name,
+//                'product_sku' => $product->sku,
+//                'design_specifications' => $itemData['design_specifications'] ?? null,
+//                'dimensions' => $itemData['dimensions'] ?? null,
+//                'color_options' => $itemData['color_options'] ?? null,
+//                'size_options' => $itemData['size_options'] ?? null,
+//                'special_instructions' => $itemData['special_instructions'] ?? null,
+//            ]);
+//
+//            // Handle design file uploads - FIXED APPROACH
+//            $this->handleDesignFileUploads($orderItem, $index, $request);
+//        }
+//    }
+
+
+    /**
+     * Create order items - UPDATED to handle nested product/gangsheet objects
+     */
     private function createOrderItems(Order $order, array $items, Request $request): void
     {
         foreach ($items as $index => $itemData) {
-            $product = Product::findOrFail($itemData['product_id']);
-
-            // Calculate item price with customizations
-            $unitPrice = $this->calculateItemPrice($product, $itemData);
-            $totalPrice = $unitPrice * $itemData['quantity'];
-
-            $orderItem = OrderItem::create([
-                'order_id' => $order->id,
-                'product_id' => $product->id,
-                'quantity' => $itemData['quantity'],
-                'unit_price' => round($unitPrice, 2),
-                'total_price' => round($totalPrice, 2),
-                'product_name' => $product->name,
-                'product_sku' => $product->sku,
-                'design_specifications' => $itemData['design_specifications'] ?? null,
-                'dimensions' => $itemData['dimensions'] ?? null,
-                'color_options' => $itemData['color_options'] ?? null,
-                'special_instructions' => $itemData['special_instructions'] ?? null,
+            Log::info('Processing order item', [
+                'index' => $index,
+                'has_product' => isset($itemData['product']),
+                'has_gangsheet' => isset($itemData['gangsheet'])
             ]);
 
-            // Handle design file uploads - FIXED APPROACH
-            $this->handleDesignFileUploads($orderItem, $index, $request);
+            // Determine item type based on which object is present
+            $isGangsheet = isset($itemData['gangsheet']) && is_array($itemData['gangsheet']);
+            $isProduct = isset($itemData['product']) && is_array($itemData['product']);
+
+            if (!$isGangsheet && !$isProduct) {
+                throw new \Exception('Each item must have either product or gangsheet data');
+            }
+
+            $itemType = $isGangsheet ? 'gangsheet' : 'product';
+            $productId = null;
+            $gangsheetId = null;
+            $product = null;
+            $quantity = 0;
+            $unitPrice = 0;
+            $productName = '';
+            $productSku = null;
+            $designSpecifications = null;
+            $dimensions = null;
+            $colorOptions = null;
+            $sizeOptions = null;
+            $specialInstructions = null;
+
+            // Handle gangsheet items
+            if ($isGangsheet) {
+                $gangsheetData = $itemData['gangsheet'];
+
+                Log::info('Processing gangsheet item', [
+                    'item_index' => $index,
+                    'gangsheet_id' => $gangsheetData['id'] ?? 'not provided'
+                ]);
+
+                $designId = $gangsheetData['id'];
+
+                // Check if gangsheet already exists in database
+                $gangsheet = $this->gangSheetService->getFromDatabase($designId);
+
+                if (!$gangsheet) {
+                    // Try to fetch from BuildAGangSheet API
+                    $apiResponse = $this->gangSheetService->getDesignDetails($designId);
+
+                    if ($apiResponse) {
+                        $gangsheet = $this->gangSheetService->syncToDatabase($designId, $apiResponse);
+                    } else {
+                        // Create placeholder if API fails
+                        $gangsheet = $this->gangSheetService->createInDatabase($designId, [
+                            'name' => $gangsheetData['name'] ?? 'Custom Gang Sheet',
+                            'status' => $gangsheetData['status'] ?? 'pending',
+                            'thumbnail_url' => $gangsheetData['thumbnail_url'] ?? null,
+                            'download_url' => $gangsheetData['download_url'] ?? null,
+                            'edit_url' => $gangsheetData['edit_url'] ?? null,
+                        ]);
+                    }
+                }
+
+                $gangsheetId = $gangsheet->id;
+                $quantity = $gangsheetData['quantity'];
+                $unitPrice = $gangsheetData['unit_price'];
+                $productName = $gangsheetData['name'];
+                $designSpecifications = $gangsheetData['design_specifications'] ?? null;
+
+                // Store gangsheet size information in dimensions
+                if (isset($gangsheetData['size'])) {
+                    $dimensions = [
+                        'width' => $gangsheetData['size']['width'],
+                        'height' => $gangsheetData['size']['height'],
+                        'unit' => $gangsheetData['size']['unit'],
+                        'title' => $gangsheetData['size']['title'],
+                    ];
+                }
+
+            }
+            // Handle product items
+            else if ($isProduct) {
+                $productData = $itemData['product'];
+
+                $productId = $productData['id'];
+                $product = Product::findOrFail($productId);
+
+                $quantity = $productData['quantity'];
+                $unitPrice = $productData['unit_price'];
+                $productName = $productData['name'] ?? $product->name;
+                $productSku = $productData['sku'] ?? $product->sku;
+                $designSpecifications = $productData['design_specifications'] ?? null;
+                $dimensions = $productData['dimensions'] ?? null;
+                $colorOptions = $productData['color_options'] ?? null;
+                $sizeOptions = $productData['size_options'] ?? null;
+                $specialInstructions = $productData['special_instructions'] ?? null;
+            }
+
+            // Calculate total price
+            $totalPrice = $quantity * $unitPrice;
+
+            // Create order item
+            $orderItem = OrderItem::create([
+                'order_id' => $order->id,
+                'product_id' => $productId,
+                'type' => $itemType,
+                'gangsheet_id' => $gangsheetId,
+                'quantity' => $quantity,
+                'unit_price' => $unitPrice,
+                'total_price' => $totalPrice,
+                'product_name' => $productName,
+                'product_sku' => $productSku,
+                'design_specifications' => $designSpecifications,
+                'dimensions' => $dimensions,
+                'color_options' => $colorOptions,
+                'size_options' => $sizeOptions,
+                'special_instructions' => $specialInstructions,
+            ]);
+
+            // Handle design file uploads (for product items only)
+            if ($itemType === 'product' && isset($productData['design_files'])) {
+                $this->handleDesignFileUploads($orderItem, $index, $request);
+            }
+
+            Log::info('Order item created', [
+                'order_item_id' => $orderItem->id,
+                'type' => $itemType,
+                'gangsheet_id' => $gangsheetId,
+                'product_id' => $productId
+            ]);
+        }
+
+        // Calculate order totals
+//        $order->calculateTotals();
+    }
+//
+//    /**
+//     * Create order items
+//     * For gangsheet items: Creates the design in BuildAGangSheet first
+//     */
+//    private function createOrderItems(Order $order, array $items, Request $request): void
+//    {
+//        foreach ($items as $index => $itemData) {
+//            Log::info('Processing order item', [
+//                'index' => $index,
+//                'item_data' => $itemData
+//            ]);
+//
+//            $itemType = $itemData['type'] ?? 'product';
+//            $productId = null;
+//            $gangsheetId = null;
+//            $product = null;
+//
+//            // Handle gang sheet items
+//            if ($itemType === 'gangsheet') {
+//                Log::info('Processing gangsheet item', [
+//                    'item_index' => $index,
+//                    'item_data' => $itemData
+//                ]);
+//
+//                // For gangsheet items, we need to CREATE the design in BuildAGangSheet
+//                // The frontend sends the gangsheet configuration in gangsheet_id field
+//                $gangsheetConfig = $itemData['gangsheet_id'] ?? $itemData['gangsheetId'] ?? null;
+//
+//                if (!$gangsheetConfig) {
+//                    throw new \Exception("Gangsheet configuration is required for gangsheet items");
+//                }
+//
+//                // If gangsheetConfig is a string (design_id), fetch existing design
+//                if (is_string($gangsheetConfig)) {
+//                    $designId = $gangsheetConfig;
+//
+//                    // Check if already exists in database
+//                    $gangsheet = $this->gangSheetService->getFromDatabase($designId);
+//
+//                    if (!$gangsheet) {
+//                        // Fetch from BuildAGangSheet API
+//                        $apiResponse = $this->gangSheetService->getDesignDetails($designId);
+//
+//                        if ($apiResponse) {
+//                            $gangsheet = $this->gangSheetService->syncToDatabase($designId, $apiResponse);
+//                        } else {
+//                            // Create placeholder if API fails
+//                            $gangsheet = $this->gangSheetService->createInDatabase($designId, [
+//                                'name' => $itemData['productName'] ?? $itemData['product_name'] ?? 'Custom Gang Sheet',
+//                                'status' => 'pending',
+//                            ]);
+//                        }
+//                    }
+//
+//                    $gangsheetId = $gangsheet->id;
+//
+//                }
+//                // If gangsheetConfig is an array, create new design in BuildAGangSheet
+//                else if (is_array($gangsheetConfig)) {
+//                    // Prepare design data for BuildAGangSheet API
+//                    $designData = $this->prepareGangsheetDesignData($gangsheetConfig, $itemData, $order);
+//
+//                    // Create design in BuildAGangSheet AND save to database
+//                    $gangsheet = $this->gangSheetService->createAndSyncGangsheet($designData);
+//
+//                    if (!$gangsheet) {
+//                        throw new \Exception('Failed to create gangsheet design in BuildAGangSheet');
+//                    }
+//
+//                    $gangsheetId = $gangsheet->id;
+//
+//                    Log::info('Created new gangsheet design in BuildAGangSheet', [
+//                        'gangsheet_db_id' => $gangsheet->id,
+//                        'design_id' => $gangsheet->design_id,
+//                        'order_id' => $order->id
+//                    ]);
+//                }
+//                else {
+//                    throw new \Exception('Invalid gangsheet configuration format');
+//                }
+//
+//            } else {
+//                // Regular product item
+//                $productId = $itemData['productId'] ?? $itemData['product_id'] ?? null;
+//
+//                if (!$productId) {
+//                    Log::error('Product item missing product_id', ['item_data' => $itemData]);
+//                    throw new \Exception('Product ID is required for product items');
+//                }
+//
+//                $product = Product::findOrFail($productId);
+//            }
+//
+//            // Create order item
+//            $orderItem = OrderItem::create([
+//                'order_id' => $order->id,
+//                'product_id' => $productId,
+//                'type' => $itemType,
+//                'gangsheet_id' => $gangsheetId,
+//                'quantity' => $itemData['quantity'],
+//                'unit_price' => $itemData['unitPrice'] ?? $itemData['unit_price'] ?? 0,
+//                'total_price' => $itemData['quantity'] * ($itemData['unitPrice'] ?? $itemData['unit_price'] ?? 0),
+//                'product_name' => $itemData['productName'] ?? $itemData['product_name'] ?? ($product->name ?? 'Gang Sheet'),
+//                'product_sku' => $itemData['sku'] ?? $itemData['product_sku'] ?? ($product->sku ?? null),
+//                'design_specifications' => $itemData['designSpecifications'] ?? $itemData['design_specifications'] ?? null,
+//                'dimensions' => $itemData['dimensions'] ?? null,
+//                'color_options' => $itemData['colorOptions'] ?? $itemData['color_options'] ?? null,
+//                'size_options' => $itemData['sizeOptions'] ?? $itemData['size_options'] ?? null,
+//                'special_instructions' => $itemData['specialInstructions'] ?? $itemData['special_instructions'] ?? null,
+//            ]);
+//
+//            // Handle design file uploads (for non-gangsheet items only)
+//            if ($itemType !== 'gangsheet') {
+//                $this->handleDesignFiles($orderItem, $index, $request);
+//            }
+//
+//            Log::info('Order item created', [
+//                'order_item_id' => $orderItem->id,
+//                'type' => $itemType,
+//                'gangsheet_id' => $gangsheetId,
+//                'product_id' => $productId
+//            ]);
+//        }
+//
+//        // Calculate order totals
+//        $order->calculateTotals();
+//    }
+
+
+    /**
+     * Prepare gangsheet design data for BuildAGangSheet API
+     *
+     * @param array $gangsheetConfig Configuration from frontend
+     * @param array $itemData Order item data
+     * @param Order $order The order being created
+     * @return array Design data formatted for BuildAGangSheet API
+     */
+    private function prepareGangsheetDesignData(array $gangsheetConfig, array $itemData, Order $order): array
+    {
+        // Extract design parameters from gangsheet config
+        // The exact structure depends on what BuildAGangSheet API expects
+
+        $designData = [
+            'name' => $gangsheetConfig['name'] ?? $itemData['productName'] ?? 'Custom Gang Sheet',
+            'size' => $gangsheetConfig['size'] ?? '22x22',
+            'order_type' => $gangsheetConfig['order_type'] ?? 'DTF',
+            'quality' => $gangsheetConfig['quality'] ?? 'high',
+        ];
+
+        // Add images if provided
+        if (isset($gangsheetConfig['images']) && is_array($gangsheetConfig['images'])) {
+            $designData['images'] = $gangsheetConfig['images'];
+        }
+
+        // Add any additional parameters from the config
+        foreach ($gangsheetConfig as $key => $value) {
+            if (!isset($designData[$key])) {
+                $designData[$key] = $value;
+            }
+        }
+
+        Log::info('Prepared gangsheet design data', [
+            'design_data' => $designData,
+            'order_number' => $order->order_number
+        ]);
+
+        return $designData;
+    }
+
+
+    /**
+     * Process gang sheet items - Generate final files
+     */
+    private function processGangSheetItems(Order $order): void
+    {
+        $gangSheetItems = $order->items()
+            ->where('type', 'gangsheet')
+            ->with('gangsheet')
+            ->get();
+
+        if ($gangSheetItems->isEmpty()) {
+            Log::info('No gangsheet items to process', [
+                'order_id' => $order->id
+            ]);
+            return;
+        }
+
+        Log::info('Processing gang sheet items for generation', [
+            'order_id' => $order->id,
+            'gang_sheet_count' => $gangSheetItems->count()
+        ]);
+
+        foreach ($gangSheetItems as $item) {
+            try {
+                if (!$item->gangsheet) {
+                    Log::warning('Gang sheet item missing gangsheet relationship', [
+                        'order_item_id' => $item->id
+                    ]);
+                    continue;
+                }
+
+                $gangsheet = $item->gangsheet;
+                $designId = $gangsheet->design_id;
+
+                // Check if already generated
+                if ($gangsheet->is_completed && $gangsheet->download_url) {
+                    Log::info('Gangsheet already generated, skipping', [
+                        'gangsheet_id' => $gangsheet->id,
+                        'design_id' => $designId
+                    ]);
+                    continue;
+                }
+
+                // Generate the gang sheet file (finalize it)
+                $fileName = "{$order->order_number}-{$item->id}.png";
+                $result = $this->gangSheetService->generateDesign($designId, $fileName);
+
+                if ($result) {
+                    Log::info('Gang sheet design generated successfully', [
+                        'order_id' => $order->id,
+                        'order_item_id' => $item->id,
+                        'gangsheet_id' => $gangsheet->id,
+                        'design_id' => $designId,
+                        'file_name' => $fileName,
+                        'status' => $result['design']['status'] ?? 'unknown'
+                    ]);
+                } else {
+                    Log::error('Failed to generate gangsheet', [
+                        'order_id' => $order->id,
+                        'order_item_id' => $item->id,
+                        'gangsheet_id' => $gangsheet->id,
+                        'design_id' => $designId
+                    ]);
+                }
+
+            } catch (\Exception $e) {
+                Log::error('Exception while processing gang sheet item', [
+                    'order_item_id' => $item->id,
+                    'gangsheet_id' => $item->gangsheet_id ?? null,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                // Don't throw exception, continue processing other items
+            }
+        }
+    }
+
+    /**
+     * Get gang sheet download URL
+     */
+    public function downloadGangSheet(Request $request, Order $order, OrderItem $orderItem): JsonResponse
+    {
+        try {
+            if ($orderItem->order_id !== $order->id) {
+                return $this->errorResponse('Order item does not belong to this order', 404);
+            }
+
+            if ($orderItem->type !== 'gangsheet' || !$orderItem->gangsheet_id) {
+                return $this->errorResponse('This order item is not a gang sheet', 400);
+            }
+
+            $orderItem->load('gangsheet');
+            $gangsheet = $orderItem->gangsheet;
+
+            if (!$gangsheet) {
+                return $this->errorResponse('Gangsheet not found', 404);
+            }
+
+            $downloadUrl = $gangsheet->download_url;
+
+            if (!$downloadUrl || !$gangsheet->is_completed) {
+                Log::info('Fetching fresh gangsheet data from API', [
+                    'gangsheet_id' => $gangsheet->id,
+                    'design_id' => $gangsheet->design_id
+                ]);
+
+                $downloadUrl = $this->gangSheetService->getDownloadUrl($gangsheet->design_id);
+                $gangsheet->refresh();
+            }
+
+            if (!$downloadUrl) {
+                return $this->errorResponse('Gang sheet download URL not available yet. The gang sheet may still be processing.', 404);
+            }
+
+            return $this->successResponse('Gang sheet download URL retrieved', [
+                'download_url' => $downloadUrl,
+                'gangsheet' => [
+                    'id' => $gangsheet->id,
+                    'design_id' => $gangsheet->design_id,
+                    'name' => $gangsheet->name,
+                    'file_name' => $gangsheet->file_name,
+                    'status' => $gangsheet->status,
+                    'is_completed' => $gangsheet->is_completed,
+                    'thumbnail_url' => $gangsheet->thumbnail_url,
+                    'edit_url' => $gangsheet->edit_url,
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to get gang sheet download URL', [
+                'order_id' => $order->id,
+                'order_item_id' => $orderItem->id,
+                'error' => $e->getMessage()
+            ]);
+
+            return $this->errorResponse('Failed to retrieve gang sheet download URL: ' . $e->getMessage(), 500);
+        }
+    }
+
+    /**
+     * Refresh gangsheet status from API
+     */
+    public function refreshGangsheetStatus(Request $request, Order $order, OrderItem $orderItem): JsonResponse
+    {
+        try {
+            if ($orderItem->order_id !== $order->id) {
+                return $this->errorResponse('Order item does not belong to this order', 404);
+            }
+
+            if ($orderItem->type !== 'gangsheet' || !$orderItem->gangsheet_id) {
+                return $this->errorResponse('This order item is not a gang sheet', 400);
+            }
+
+            $orderItem->load('gangsheet');
+            $gangsheet = $orderItem->gangsheet;
+
+            if (!$gangsheet) {
+                return $this->errorResponse('Gangsheet not found', 404);
+            }
+
+            // Force refresh from API
+            $apiResponse = $this->gangSheetService->getDesignDetails($gangsheet->design_id, true);
+
+            if (!$apiResponse) {
+                return $this->errorResponse('Failed to fetch gangsheet status from API', 500);
+            }
+
+            $gangsheet->refresh();
+
+            return $this->successResponse('Gangsheet status refreshed', [
+                'gangsheet' => [
+                    'id' => $gangsheet->id,
+                    'design_id' => $gangsheet->design_id,
+                    'name' => $gangsheet->name,
+                    'status' => $gangsheet->status,
+                    'is_completed' => $gangsheet->is_completed,
+                    'download_url' => $gangsheet->download_url,
+                    'thumbnail_url' => $gangsheet->thumbnail_url,
+                    'last_synced_at' => $gangsheet->last_synced_at,
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to refresh gangsheet status', [
+                'order_id' => $order->id,
+                'order_item_id' => $orderItem->id,
+                'error' => $e->getMessage()
+            ]);
+
+            return $this->errorResponse('Failed to refresh gangsheet status: ' . $e->getMessage(), 500);
         }
     }
 
     /**
      * Handle design file uploads for order item
-     */
-
-    /**
-     * Handle design file uploads for order item - ENHANCED DEBUG VERSION
+     * MINIMAL FIX: Updated to check for items[X][product][design_files] pattern
      */
     private function handleDesignFileUploads(OrderItem $orderItem, int $itemIndex, Request $request): void
     {
@@ -687,13 +1203,13 @@ class OrderApiController extends Controller
                 'all_files' => array_keys($request->allFiles())
             ]);
 
-            // Method 1: Check for files in items array format
-            $designFilesKey = "items.{$itemIndex}.design_files";
+            // Method 1: NEW - Check for files in nested product structure: items[0][product][design_files]
+            $designFilesKey = "items.{$itemIndex}.product.design_files";
             Log::info('Checking for files with key: ' . $designFilesKey);
 
             if ($request->hasFile($designFilesKey)) {
                 $files = $request->file($designFilesKey);
-                Log::info('Found files with nested key', [
+                Log::info('Found files with nested product key', [
                     'key' => $designFilesKey,
                     'file_count' => is_array($files) ? count($files) : 1,
                     'files_info' => $this->getFilesDebugInfo($files)
@@ -702,7 +1218,22 @@ class OrderApiController extends Controller
                 return;
             }
 
-            // Method 2: Check for files with item-specific naming
+            // Method 2: OLD - Check for files in old flat structure (backward compatibility)
+            $designFilesKey = "items.{$itemIndex}.design_files";
+            Log::info('Checking for files with key: ' . $designFilesKey);
+
+            if ($request->hasFile($designFilesKey)) {
+                $files = $request->file($designFilesKey);
+                Log::info('Found files with old flat key', [
+                    'key' => $designFilesKey,
+                    'file_count' => is_array($files) ? count($files) : 1,
+                    'files_info' => $this->getFilesDebugInfo($files)
+                ]);
+                $this->processDesignFiles($orderItem, $files);
+                return;
+            }
+
+            // Method 3: Check for files with item-specific naming
             $designFilesKey = "design_files_{$itemIndex}";
             Log::info('Checking for files with key: ' . $designFilesKey);
 
@@ -716,7 +1247,7 @@ class OrderApiController extends Controller
                 return;
             }
 
-            // Method 3: Check for general design_files array
+            // Method 4: Check for general design_files array
             if ($request->hasFile('design_files')) {
                 $allFiles = $request->file('design_files');
                 Log::info('Found general design_files', [
@@ -758,6 +1289,90 @@ class OrderApiController extends Controller
             ]);
         }
     }
+
+    /**
+     * Handle design file uploads for order item - ENHANCED DEBUG VERSION
+     */
+//    private function handleDesignFileUploads(OrderItem $orderItem, int $itemIndex, Request $request): void
+//    {
+//        try {
+//            Log::info('Starting file upload handling', [
+//                'order_item_id' => $orderItem->id,
+//                'item_index' => $itemIndex,
+//                'all_files' => array_keys($request->allFiles())
+//            ]);
+//
+//            // Method 1: Check for files in items array format
+//            $designFilesKey = "items.{$itemIndex}.design_files";
+//            Log::info('Checking for files with key: ' . $designFilesKey);
+//
+//            if ($request->hasFile($designFilesKey)) {
+//                $files = $request->file($designFilesKey);
+//                Log::info('Found files with nested key', [
+//                    'key' => $designFilesKey,
+//                    'file_count' => is_array($files) ? count($files) : 1,
+//                    'files_info' => $this->getFilesDebugInfo($files)
+//                ]);
+//                $this->processDesignFiles($orderItem, $files);
+//                return;
+//            }
+//
+//            // Method 2: Check for files with item-specific naming
+//            $designFilesKey = "design_files_{$itemIndex}";
+//            Log::info('Checking for files with key: ' . $designFilesKey);
+//
+//            if ($request->hasFile($designFilesKey)) {
+//                $files = $request->file($designFilesKey);
+//                Log::info('Found files with item-specific key', [
+//                    'key' => $designFilesKey,
+//                    'file_count' => is_array($files) ? count($files) : 1
+//                ]);
+//                $this->processDesignFiles($orderItem, $files);
+//                return;
+//            }
+//
+//            // Method 3: Check for general design_files array
+//            if ($request->hasFile('design_files')) {
+//                $allFiles = $request->file('design_files');
+//                Log::info('Found general design_files', [
+//                    'is_array' => is_array($allFiles),
+//                    'has_item_index' => isset($allFiles[$itemIndex])
+//                ]);
+//
+//                // If it's an associative array with item indices
+//                if (isset($allFiles[$itemIndex])) {
+//                    $files = $allFiles[$itemIndex];
+//                    Log::info('Using files for item index', [
+//                        'item_index' => $itemIndex,
+//                        'file_count' => is_array($files) ? count($files) : 1
+//                    ]);
+//                    $this->processDesignFiles($orderItem, $files);
+//                    return;
+//                }
+//
+//                // If it's the first item and no specific indexing
+//                if ($itemIndex === 0 && is_array($allFiles)) {
+//                    Log::info('Using all files for first item');
+//                    $this->processDesignFiles($orderItem, $allFiles);
+//                    return;
+//                }
+//            }
+//
+//            Log::warning('No design files found for order item', [
+//                'order_item_id' => $orderItem->id,
+//                'item_index' => $itemIndex,
+//                'available_file_keys' => array_keys($request->allFiles())
+//            ]);
+//
+//        } catch (\Exception $e) {
+//            Log::error('Failed to handle design file uploads', [
+//                'order_item_id' => $orderItem->id,
+//                'item_index' => $itemIndex,
+//                'error' => $e->getMessage(),
+//                'trace' => $e->getTraceAsString()
+//            ]);
+//        }
+//    }
 
     private function getFilesDebugInfo($files): array
     {
@@ -990,6 +1605,43 @@ class OrderApiController extends Controller
             'email' => $user->email,
             'temporary_password' => $user->temporary_password ?? 'N/A',
         ]);
+    }
+
+    /**
+     * Get the Order setting
+     */
+    public function getOrderSettings(): JsonResponse
+    {
+        $orderSettings = OrderSetting::all();
+
+        return $this->successResponse('Order setting fetched successfully', [
+                'order' => OrderSettingResource::collection($orderSettings)
+            ]
+        );
+    }
+    /**
+     * Update order status
+     */
+    public function updateOrderSettings(Request $request, $order_setting): JsonResponse
+    {
+        $orderSetting = OrderSetting::where('id', $order_setting)->first();
+
+        if (!isset($orderSetting) && !$orderSetting) {
+            return $this->errorResponse('This order setting does not exist', 400);
+        }
+
+        $request->validate([
+            'value' => 'required',
+        ]);
+
+        $orderSetting->update([
+            'value' => $request->value,
+        ]);
+
+        return $this->successResponse('Order Setting updated successfully', [
+                'order_setting' => new OrderSettingResource($orderSetting)
+            ]
+        );
     }
 }
 

@@ -11,10 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('product_images', function (Blueprint $table) {
-            $table->longBlob('image_data')->nullable(); // Store actual image bytes
-            $table->string('mime_type', 50)->nullable(); // image/jpeg, image/png, etc.
-            $table->integer('file_size')->nullable(); // File size in bytes
+        Schema::table('order_items', function (Blueprint $table) {
+            $table->json('size_options')->nullable()->default(null)->after('color_options');
         });
     }
 
@@ -23,7 +21,7 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('product_images', function (Blueprint $table) {
+        Schema::table('order_items', function (Blueprint $table) {
             //
         });
     }

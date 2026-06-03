@@ -50,7 +50,6 @@ class ProfileApiController extends Controller
         $rules['last_name']        = ['nullable'];
         $rules['gender']           = ['nullable','integer', Rule::in([User::KEY_GENDER_MALE, User::KEY_GENDER_FEMALE])];
         $rules['phone']            = ['nullable'];
-        $rules['gender']           = ['nullable'];
         $rules['address_line_one'] = ['nullable'];
         $rules['address_line_two'] = ['nullable'];
         $rules['city']             = ['nullable'];

@@ -197,6 +197,84 @@ class User extends Authenticatable implements ColorsCodeInterface
         return $query;
     }
 
+    // ── Pickup Approval Constants ───────────────────────────────────
+    public const PICKUP_APPROVAL_NONE     = 'none';
+    public const PICKUP_APPROVAL_PENDING  = 'pending';
+    public const PICKUP_APPROVAL_APPROVED = 'approved';
+    public const PICKUP_APPROVAL_REJECTED = 'rejected';
+
+// ── Fillable / casts additions ──────────────────────────────────
+// Add to $fillable (or remove from $guarded exceptions):
+// 'pickup_approval_status', 'pickup_approval_requested_at',
+// 'pickup_approval_reviewed_at', 'pickup_approval_reviewed_by'
+
+// ── Scope ───────────────────────────────────────────────────────
+    public function scopePickupPending($query)
+    {
+        return $query->where('pickup_approval_status', self::PICKUP_APPROVAL_PENDING);
+    }
+
+// ── Helper Methods ──────────────────────────────────────────────
+    public function canPayOnPickup(): bool
+    {
+        return $this->pickup_approval_status === self::PICKUP_APPROVAL_APPROVED;
+    }
+
+    public function hasAppliedForPickup(): bool
+    {
+        return in_array($this->pickup_approval_status, [
+            self::PICKUP_APPROVAL_PENDING,
+            self::PICKUP_APPROVAL_APPROVED,
+        ]);
+    }
+
+    // ── Tax Exemption Status Constants ──────────────────────────────
+    public const TAX_EXEMPT_NONE     = 'none';
+    public const TAX_EXEMPT_PENDING  = 'pending';
+    public const TAX_EXEMPT_APPROVED = 'approved';
+    public const TAX_EXEMPT_REJECTED = 'rejected';
+
+// ── Scope ───────────────────────────────────────────────────────
+    public function scopeTaxExemptPending($query)
+    {
+        return $query->where('tax_exempt_status', self::TAX_EXEMPT_PENDING);
+    }
+
+// ── Helper Methods ───────────────────────────────────────────────
+    public function isTaxExempt(): bool
+    {
+        return $this->tax_exempt_status === self::TAX_EXEMPT_APPROVED;
+    }
+
+    public function hasPendingTaxExemption(): bool
+    {
+        return $this->tax_exempt_status === self::TAX_EXEMPT_PENDING;
+    }
+
+    public function taxExemptDocumentUrl(): ?string
+    {
+        if (!$this->tax_exempt_document) return null;
+        return asset('storage/' . $this->tax_exempt_document);
+    }
+
+    /**
+     * Always returns a fully resolved URL regardless of environment.
+     * Stored value in DB is a relative path: "tax-exemption-docs/abc.png"
+     */
+    public function getTaxExemptDocumentUrlAttribute(): ?string
+    {
+        if (!$this->tax_exempt_document) {
+            return null;
+        }
+
+        // If already a full URL (old records before migration), return as-is
+        if (str_starts_with($this->tax_exempt_document, 'http')) {
+            return $this->tax_exempt_document;
+        }
+
+        return asset('storage/' . $this->tax_exempt_document);
+    }
+
     /*
     |--------------------------------------------------------------------------
     | Validations

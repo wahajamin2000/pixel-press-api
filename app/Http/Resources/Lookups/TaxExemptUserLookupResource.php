@@ -2,10 +2,9 @@
 
 namespace App\Http\Resources\Lookups;
 
-use App\Models\Modules\Friendship;
 use Illuminate\Http\Resources\Json\JsonResource;
 
-class UserLookupResource extends JsonResource
+class TaxExemptUserLookupResource extends JsonResource
 {
 
     /**
@@ -19,8 +18,8 @@ class UserLookupResource extends JsonResource
         return [
             "id" => $this->id ?? null,
             "name" => $this->name ?? null,
-            "phone" => $this->phone ?? null,
             "image" => $this->pic,
+            'document_url' => $this->tax_exempt_document_url ?? null,
         ];
     }
 }

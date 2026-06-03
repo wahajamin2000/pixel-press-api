@@ -26,6 +26,10 @@ class OrderLookupResource extends JsonResource
                 'name' => $this->status->name ?? null,
             ],
             'payment_status' => $this->payment_status,
+            'payment_method'  => $this->payment_method,
+            'is_tax_exempt'   => (bool) $this->is_tax_exempt,
+            'shipping_method' => $this->shipping_method,
+            'is_local_pickup' => $this->shipping_method === 'local_pickup',
 
             'formatted_subtotal' => '$' . number_format($this->subtotal, 2),
             'formatted_discount_amount' => '$' . number_format($this->discount_amount, 2),

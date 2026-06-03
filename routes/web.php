@@ -17,7 +17,7 @@ Route::get('/run-command', function () {
 //    \Illuminate\Support\Facades\Artisan::call('storage:link');
 //    \Illuminate\Support\Facades\Artisan::call('cache:clear');
 //    \Illuminate\Support\Facades\Artisan::call('config:cache');
-//    \Illuminate\Support\Facades\Artisan::call('view:clear');
+//    \Illuminate\Support\Facades\Artisan::call('view:clear');php
 //    \Illuminate\Support\Facades\Artisan::call('route:clear');
 });
 

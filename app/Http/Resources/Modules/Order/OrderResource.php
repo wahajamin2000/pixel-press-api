@@ -25,6 +25,14 @@ class OrderResource extends JsonResource
             ],
             'payment_status' => $this->payment_status,
             'payment_method' => $this->payment_method,
+            'is_tax_exempt'  => (bool) $this->is_tax_exempt,
+            'shipping_method' => $this->shipping_method,
+
+            'is_local_pickup' => $this->shipping_method === 'local_pickup',
+            'pickup_info'     => $this->shipping_method === 'local_pickup' ? [
+                'address' => config('project.pickup.address'),
+                'message' => config('project.pickup.message'),
+            ] : null,
 
             // Financial Information
             'subtotal' => $this->subtotal,

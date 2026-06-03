@@ -3,7 +3,9 @@
 use App\Http\Controllers\Api\V1\Auth\AuthApiController;
 use App\Http\Controllers\Api\V1\Auth\ChangePasswordController;
 use App\Http\Controllers\Api\V1\Auth\ForgotPasswordController;
+use App\Http\Controllers\Api\V1\Auth\PickupApprovalApiController;
 use App\Http\Controllers\Api\V1\Auth\ProfileApiController;
+use App\Http\Controllers\Api\V1\Auth\TaxExemptionApiController;
 use App\Http\Controllers\Api\V1\Modules\Product\ProductCategoryApiController;
 use App\Http\Controllers\Api\V1\Modules\User\UserApiController;
 use App\Http\Controllers\Api\V1\Modules\Order\OrderApiController;
@@ -71,6 +73,8 @@ Route::prefix('v1')->group(function () {
     Route::post('orders', [OrderApiController::class, 'store']);
     Route::get('orders/{order}', [OrderApiController::class, 'show'])->middleware('auth:sanctum');
     Route::get('orders/{order}/status-history', [OrderApiController::class, 'statusHistory']);
+
+    Route::get('orders/track/{order_number}', [OrderApiController::class, 'trackByNumber']);
 
     // Design file upload for order items
     Route::post('orders/{order}/items/{orderItem}/design-files', [OrderApiController::class, 'uploadDesignFiles']);
@@ -144,6 +148,15 @@ Route::group(['middleware' => ['auth:sanctum']], function ($router) {
 
         Route::prefix('v1')->group(function () {
 
+            // Admin routes (inside isSuperAdmin group)
+            Route::get('pickup-approval/pending',          [PickupApprovalApiController::class, 'pending']);
+            Route::post('pickup-approval/{id}/approve',    [PickupApprovalApiController::class, 'approve']);
+            Route::post('pickup-approval/{id}/reject',     [PickupApprovalApiController::class, 'reject']);
+
+            Route::get ('tax-exemption/pending',         [TaxExemptionApiController::class, 'pending']);
+            Route::post('tax-exemption/{id}/approve',    [TaxExemptionApiController::class, 'approve']);
+            Route::post('tax-exemption/{id}/reject',     [TaxExemptionApiController::class, 'reject']);
+
             Route::put('product_categories/status/{product_category}', [ProductCategoryApiController::class, 'updateStatus']);
             Route::apiResource('product_categories', ProductCategoryApiController::class);
 
@@ -186,6 +199,12 @@ Route::group(['middleware' => ['auth:sanctum']], function ($router) {
     Route::group(['middleware' => 'isCustomer'], function ($router) {
 
         Route::prefix('v1/customer')->group(function () {
+
+            Route::get ('tax-exemption/status',  [TaxExemptionApiController::class, 'status']);
+            Route::post('tax-exemption/apply',   [TaxExemptionApiController::class, 'apply']);
+
+            Route::post('pickup-approval/apply', [PickupApprovalApiController::class, 'apply']);
+            Route::get ('pickup-approval/status', [PickupApprovalApiController::class, 'status']);
 
             Route::apiResource('products', ProductApiController::class)->only(['show']);
 

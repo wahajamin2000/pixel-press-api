@@ -107,7 +107,7 @@ class PaymentApiController extends Controller
             switch ($paymentIntent->status) {
                 case 'succeeded':
                     $order->update([
-                        'payment_status' => PaymentStatus::PAID,
+                        'payment_status' => PaymentStatus::PAID->value,
                         'payment_method' => $paymentIntent->payment_method_types[0] ?? 'card',
                     ]);
                     break;
@@ -123,7 +123,7 @@ class PaymentApiController extends Controller
                     return $this->errorResponse('Payment method was declined', 400);
 
                 case 'canceled':
-                    $order->update(['payment_status' => PaymentStatus::FAILED]);
+                    $order->update(['payment_status' => PaymentStatus::FAILED->value]);
                     return $this->errorResponse('Payment was cancelled', 400);
 
                 default:
@@ -261,7 +261,7 @@ class PaymentApiController extends Controller
 
         if ($order) {
             $order->update([
-                'payment_status' => PaymentStatus::PAID,
+                'payment_status' => PaymentStatus::PAID->value,
                 'payment_method' => $paymentIntent->payment_method_types[0] ?? 'card',
             ]);
 
@@ -278,7 +278,7 @@ class PaymentApiController extends Controller
 
         if ($order) {
             $order->update([
-                'payment_status' => PaymentStatus::FAILED,
+                'payment_status' => PaymentStatus::FAILED->value,
             ]);
 
             Log::warning('Payment failed for order', ['order_id' => $order->id]);

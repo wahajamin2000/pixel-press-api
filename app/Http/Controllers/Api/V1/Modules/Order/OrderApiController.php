@@ -9,6 +9,7 @@ use App\Http\Resources\Lookups\OrderLookupResource;
 use App\Http\Resources\Modules\Order\OrderResource;
 use App\Http\Resources\Modules\Order\OrderSettingResource;
 use App\Http\Resources\Modules\Order\OrderStatusHistoryResource;
+use App\Mail\NewOrderAdminNotification;
 use App\Models\OrderSetting;
 use App\Models\User;
 use App\Models\Order;
@@ -168,9 +169,34 @@ class OrderApiController extends Controller
             // Pre-calculate order totals before creating order
 //            $orderCalculations = $this->calculateOrderTotals($request->validated());
 
+            $paymentMethod = $request->payment_method ?? 'online';
+
+            if ($paymentMethod === 'pay_on_pickup') {
+                if (!auth('sanctum')->check()) {
+                    return $this->errorResponse('Login required for Pay on Pickup.', 403);
+                }
+                if (!auth('sanctum')->user()->canPayOnPickup()) {
+                    return $this->errorResponse(
+                        'You are not approved for Pay on Pickup. Please apply first.', 403
+                    );
+                }
+            }
+
+            $shippingMethod = $request->shipping_method ?? 'standard';
+            $shippingAmount = $request->shipping_amount ?? 0;
+
+            // Local pickup: always zero shipping
+            if ($shippingMethod === 'local_pickup') {
+                $shippingAmount = 0;
+            }
+
+//            $isTaxExempt = $user && $user->isTaxExempt();
+            $isTaxExempt = auth('sanctum')->check() && auth('sanctum')->user()->isTaxExempt();
+            $taxAmount = $isTaxExempt ? 0 : ($request->tax_amount ?? 0);
+
             // Create order with calculated values
 //            $order = $this->createOrder($user, $request->validated(), $orderCalculations);
-            $order = $this->createOrder($user, $request->validated());
+            $order = $this->createOrder($user, $request->validated(), $paymentMethod, $shippingMethod, $shippingAmount, $isTaxExempt, $taxAmount);
 
             // Create order items with file handling
             $this->createOrderItems($order, $request->validated()['items'], $request);
@@ -185,6 +211,31 @@ class OrderApiController extends Controller
             DB::commit();
 
             $order->load(['user', 'items.product','items.gangsheet', 'items.designFiles']);
+
+            // After DB::commit() and $order->load(...)
+
+            Log::info('Sending Email', ['order' => $order->order_no]);
+
+            $adminEmails = config('project.admin_notification_emails', []);
+
+            Log::info('Admin emails config', ['emails' => $adminEmails]);
+
+            if (!empty($adminEmails)) {
+                foreach ($adminEmails as $email) {
+                    $email = trim($email);
+                    try {
+                        Log::info('Attempting to send email to: ' . $email);
+                        Mail::to($email)->send(new NewOrderAdminNotification($order));
+                        Log::info('Email sent successfully to: ' . $email);
+                    } catch (\Exception $e) {
+                        Log::error('Failed to send admin notification email', [
+                            'email' => $email,
+                            'error' => $e->getMessage(),
+                            'trace' => $e->getTraceAsString(),
+                        ]);
+                    }
+                }
+            }
 
             if (isset($user->temporary_password)) {
                 $this->sendWelcomeEmail($user);
@@ -608,7 +659,7 @@ class OrderApiController extends Controller
     /**
      * Create order with calculated values
      */
-    private function createOrder(User $user, array $data): Order
+    private function createOrder(User $user, array $data, string $paymentMethod = 'online', string $shippingMethod = 'standard', float  $shippingAmount = 0, bool   $isTaxExempt  = false, float  $taxAmount    = 0): Order
     {
         return Order::create([
             'user_id' => $user->id,
@@ -616,8 +667,9 @@ class OrderApiController extends Controller
             'order_number' => Order::generateOrderNumber(),
             'status' => OrderStatus::PENDING,
             'subtotal' => $data['subtotal'],
-            'tax_amount' => $data['tax_amount'],
-            'shipping_amount' => $data['shipping_amount'],
+            'tax_amount' => $taxAmount,
+            'is_tax_exempt' => $isTaxExempt,
+            'shipping_amount' => $shippingAmount,
             'discount_amount' => $data['discount_amount'],
             'total_amount' => $data['total_amount'],
             'currency' => 'USD',
@@ -626,6 +678,8 @@ class OrderApiController extends Controller
             'shipping_address' => $data['shipping_address'] ?? $data['billing_address'] ?? null,
             'notes' => $data['notes'] ?? null,
             'special_instructions' => $data['special_instructions'] ?? null,
+            'payment_method' => $paymentMethod,
+            'shipping_method' => $shippingMethod,
 //            'is_gang_sheet' => $data['is_gang_sheet'] ?? false,
 //            'gang_sheet_data' => $data['gang_sheet_data'] ?? null,
         ]);
@@ -1615,7 +1669,12 @@ class OrderApiController extends Controller
         $orderSettings = OrderSetting::all();
 
         return $this->successResponse('Order setting fetched successfully', [
-                'order' => OrderSettingResource::collection($orderSettings)
+                'order' => OrderSettingResource::collection($orderSettings),
+                'pickup_info'    => [
+                    'address' => config('project.pickup.address',
+                        '123 Main Street, Your City, State 00000'),
+                    'message' => 'WE WILL CONTACT YOU WHEN IT\'S READY',
+                ],
             ]
         );
     }
@@ -1643,6 +1702,18 @@ class OrderApiController extends Controller
             ]
         );
     }
+
+    public function trackByNumber(string $order_number): JsonResponse
+    {
+        $order = Order::where('order_number', $order_number)
+            ->with(['items.product', 'items.gangsheet', 'items.designFiles'])
+            ->firstOrFail();
+
+        return $this->successResponse('Order retrieved successfully', [
+            'order' => new OrderResource($order),
+        ]);
+    }
+
 }
 
 

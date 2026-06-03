@@ -3,6 +3,7 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StoreOrderRequest extends FormRequest
 {
@@ -83,11 +84,13 @@ class StoreOrderRequest extends FormRequest
             // Order metadata
             'notes' => 'nullable|string|max:1000',
             'special_instructions' => 'nullable|string|max:1000',
-            'shipping_method' => 'nullable|string|in:standard,express,overnight',
+            'shipping_method' => ['nullable','string',Rule::in(['standard', 'express', 'overnight', 'local_pickup']),],
             'discount_code' => 'nullable|string|max:50',
             'custom_discount_amount' => 'nullable|numeric|min:0',
 
-            'tax_exempt' => 'nullable|boolean',
+            'payment_method' => ['nullable', 'string', Rule::in(['online', 'pay_on_pickup'])],
+
+//            'tax_exempt' => 'nullable|boolean',
             'subtotal' => 'required|numeric',
             'tax_amount' => 'nullable|numeric',
             'shipping_amount' => 'nullable|numeric',

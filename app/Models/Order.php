@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\OrderStatus;
+use App\Enums\PaymentStatus;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -19,12 +20,14 @@ class Order extends Model
         'order_number',
         'status',
         'subtotal',
+        'is_tax_exempt',
         'tax_amount',
         'shipping_amount',
         'discount_amount',
         'total_amount',
         'currency',
         'payment_method',
+        'shipping_method',
         'payment_status',
         'payment_intent_id',
         'billing_address',
@@ -39,7 +42,7 @@ class Order extends Model
 
     protected $casts = [
         'status' => OrderStatus::class,
-        'payment_status' => OrderStatus::class,
+        'payment_status' => PaymentStatus::class,
         'subtotal' => 'decimal:2',
         'tax_amount' => 'decimal:2',
         'shipping_amount' => 'decimal:2',

@@ -51,6 +51,20 @@ class ProfileResource extends JsonResource
                 'value' => $this->status ?? null,
                 'name' => $this->statusName ?? null,
             ],
+            "tax_exempt" => [
+                'tax_exempt_status'    => $this->tax_exempt_status,
+                'is_tax_exempt'        => $this->isTaxExempt(),
+                'tax_exempt_applied_at'=> $this->tax_exempt_applied_at,
+                'tax_exempt_doc_url'   => $this->tax_exempt_document_url,
+                'tax_exempt_rejection_reason' => $this->tax_exempt_rejection_reason,
+            ],
+            "pickup_approval" => [
+                'pickup_approval_status'       => $this->pickup_approval_status,
+                'can_pay_on_pickup'            => $this->canPayOnPickup(),
+                'has_applied_for_pickup'       => $this->hasAppliedForPickup(),
+                'pickup_approval_requested_at' => $this->pickup_approval_requested_at,
+                'pickup_approval_reviewed_at'  => $this->pickup_approval_reviewed_at,
+            ],
             "image" => $this->pic,
             'created_at' => $this->created_at ? [
                 'date' => $this->created_at->format('Y-m-d'),
